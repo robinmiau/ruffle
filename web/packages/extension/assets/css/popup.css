@@ -34,6 +34,7 @@ body {
 
 #status-indicator {
     --color: #4caf50;
+
     flex-shrink: 0;
     width: 8px;
     height: 8px;
@@ -41,15 +42,13 @@ body {
     margin-right: 7px;
     background: var(--color);
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--color) 22%, transparent);
-    transition: background 0.2s, box-shadow 0.2s;
+    transition:
+        background 0.2s,
+        box-shadow 0.2s;
 }
 
 .options {
     gap: 10px;
-}
-
-.buttons-container:not(:has(> button:not(.hidden))) {
-    display: none;
 }
 
 .buttons-container {
@@ -58,6 +57,10 @@ body {
     row-gap: 4px;
     padding: 0 10px 10px;
     gap: 4px;
+}
+
+.buttons-container:not(:has(> button:not(.hidden))) {
+    display: none;
 }
 
 .buttons-container button {
@@ -77,7 +80,9 @@ body {
     border-radius: 6px;
     border: 1px solid #ffffff25;
     background: var(--ruffle-blue-mid);
-    transition: background 0.15s, border-color 0.15s;
+    transition:
+        background 0.15s,
+        border-color 0.15s;
     display: flex;
     align-items: center;
     justify-content: center;
