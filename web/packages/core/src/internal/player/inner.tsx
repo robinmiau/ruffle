@@ -196,8 +196,7 @@ export class InnerPlayer {
     // When set to `true`, the next context menu event will
     // not show the context menu.
     private _suppressContextMenu = false;
-    private hideContextMenuOnWheel: ((event: WheelEvent) => void) | null =
-        null;
+    private hideContextMenuOnWheel: ((event: WheelEvent) => void) | null = null;
 
     // The effective config loaded upon `.load()`.
     public loadedConfig?: URLLoadOptions | DataLoadOptions;
@@ -393,7 +392,7 @@ export class InnerPlayer {
             }
         };
 
-        modalElement.addEventListener("click", hideModal);
+        modalElement.parentNode!.addEventListener("click", hideModal);
         const modalArea = modalElement.querySelector(".modal-area");
         if (modalArea) {
             modalArea.addEventListener("click", (event) =>
@@ -458,10 +457,6 @@ export class InnerPlayer {
         volumeMuteCheckbox.checked = this.volumeSettings.isMuted;
         volumeSlider.disabled = volumeMuteCheckbox.checked;
         volumeSlider.valueAsNumber = this.volumeSettings.volume;
-        volumeSlider.style.setProperty(
-            "--volume-pct",
-            `${this.volumeSettings.volume}%`,
-        );
         volumeSliderText.textContent = volumeSlider.value + "%";
         setVolumeIcon();
 
@@ -474,10 +469,6 @@ export class InnerPlayer {
         });
         volumeSlider.addEventListener("input", () => {
             volumeSliderText.textContent = volumeSlider.value + "%";
-            volumeSlider.style.setProperty(
-                "--volume-pct",
-                `${volumeSlider.value}%`,
-            );
             this.volumeSettings.volume = volumeSlider.valueAsNumber;
             this.instance?.set_volume(this.volumeSettings.get_volume());
             setVolumeIcon();
@@ -769,17 +760,7 @@ export class InnerPlayer {
 
         this.rendererDebugInfo = this.instance!.renderer_debug_info();
 
-        // Show a hardware acceleration warning when software rendering is detected.
-        // The device type is unreliable through WebGL/ANGLE (always "Other"), so we
-        // also match known software renderer names (WARP, SwiftShader, Mesa llvmpipe).
-        const isSoftwareRenderer =
-            this.rendererDebugInfo.includes("Adapter Device Type: Cpu") ||
-            this.rendererDebugInfo.includes("Adapter Device Type: VirtualGpu") ||
-            this.rendererDebugInfo.includes("Microsoft Basic Render Driver") ||
-            this.rendererDebugInfo.includes("SwiftShader") ||
-            this.rendererDebugInfo.includes("llvmpipe") ||
-            this.rendererDebugInfo.includes("softpipe");
-        if (isSoftwareRenderer) {
+        if (this.rendererDebugInfo.includes("Adapter Device Type: Cpu")) {
             this.container.addEventListener(
                 "mouseover",
                 this.openHardwareAccelerationModal.bind(this),
@@ -1864,12 +1845,18 @@ export class InnerPlayer {
         // when it would overflow, falling back to clamping if there's no room.
         let cx = event.clientX;
         if (cx + menuWidth > vw) {
-            cx = event.clientX - menuWidth >= 0 ? event.clientX - menuWidth : vw - menuWidth;
+            cx =
+                event.clientX - menuWidth >= 0
+                    ? event.clientX - menuWidth
+                    : vw - menuWidth;
         }
 
         let cy = event.clientY;
         if (cy + menuHeight > vh) {
-            cy = event.clientY - menuHeight >= 0 ? event.clientY - menuHeight : vh - menuHeight;
+            cy =
+                event.clientY - menuHeight >= 0
+                    ? event.clientY - menuHeight
+                    : vh - menuHeight;
         }
 
         const x = cx - playerRect.x;
@@ -1893,11 +1880,9 @@ export class InnerPlayer {
         this.contextMenuOverlay.classList.add("hidden");
         this.contextMenuOpenPosition = null;
         if (this.hideContextMenuOnWheel) {
-            document.removeEventListener(
-                "wheel",
-                this.hideContextMenuOnWheel,
-                { capture: true },
-            );
+            document.removeEventListener("wheel", this.hideContextMenuOnWheel, {
+                capture: true,
+            });
             this.hideContextMenuOnWheel = null;
         }
     }
