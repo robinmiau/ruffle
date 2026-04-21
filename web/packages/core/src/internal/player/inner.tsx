@@ -93,6 +93,12 @@ interface ContextMenuItem {
      * @default true
      */
     enabled?: boolean;
+
+    /**
+     * Whether this item has a checkmark next to it.
+     * When defined, a checkmark column is shown for all items in the group.
+     */
+    checked?: boolean;
 }
 
 /**
@@ -178,6 +184,9 @@ export class InnerPlayer {
     // Allows the user to permanently disable the context menu.
     private contextMenuForceDisabled = false;
 
+    // The client position where the custom context menu was last opened.
+    private contextMenuOpenPosition: { x: number; y: number } | null = null;
+
     // Whether the most recent pointer event was from a touch (or pen).
     private isTouch = false;
     // Whether this device sends contextmenu events.
@@ -187,6 +196,8 @@ export class InnerPlayer {
     // When set to `true`, the next context menu event will
     // not show the context menu.
     private _suppressContextMenu = false;
+    private hideContextMenuOnWheel: ((event: WheelEvent) => void) | null =
+        null;
 
     // The effective config loaded upon `.load()`.
     public loadedConfig?: URLLoadOptions | DataLoadOptions;
@@ -382,7 +393,7 @@ export class InnerPlayer {
             }
         };
 
-        modalElement.parentNode!.addEventListener("click", hideModal);
+        modalElement.addEventListener("click", hideModal);
         const modalArea = modalElement.querySelector(".modal-area");
         if (modalArea) {
             modalArea.addEventListener("click", (event) =>
@@ -447,6 +458,10 @@ export class InnerPlayer {
         volumeMuteCheckbox.checked = this.volumeSettings.isMuted;
         volumeSlider.disabled = volumeMuteCheckbox.checked;
         volumeSlider.valueAsNumber = this.volumeSettings.volume;
+        volumeSlider.style.setProperty(
+            "--volume-pct",
+            `${this.volumeSettings.volume}%`,
+        );
         volumeSliderText.textContent = volumeSlider.value + "%";
         setVolumeIcon();
 
@@ -459,6 +474,10 @@ export class InnerPlayer {
         });
         volumeSlider.addEventListener("input", () => {
             volumeSliderText.textContent = volumeSlider.value + "%";
+            volumeSlider.style.setProperty(
+                "--volume-pct",
+                `${volumeSlider.value}%`,
+            );
             this.volumeSettings.volume = volumeSlider.valueAsNumber;
             this.instance?.set_volume(this.volumeSettings.get_volume());
             setVolumeIcon();
@@ -750,7 +769,17 @@ export class InnerPlayer {
 
         this.rendererDebugInfo = this.instance!.renderer_debug_info();
 
-        if (this.rendererDebugInfo.includes("Adapter Device Type: Cpu")) {
+        // Show a hardware acceleration warning when software rendering is detected.
+        // The device type is unreliable through WebGL/ANGLE (always "Other"), so we
+        // also match known software renderer names (WARP, SwiftShader, Mesa llvmpipe).
+        const isSoftwareRenderer =
+            this.rendererDebugInfo.includes("Adapter Device Type: Cpu") ||
+            this.rendererDebugInfo.includes("Adapter Device Type: VirtualGpu") ||
+            this.rendererDebugInfo.includes("Microsoft Basic Render Driver") ||
+            this.rendererDebugInfo.includes("SwiftShader") ||
+            this.rendererDebugInfo.includes("llvmpipe") ||
+            this.rendererDebugInfo.includes("softpipe");
+        if (isSoftwareRenderer) {
             this.container.addEventListener(
                 "mouseover",
                 this.openHardwareAccelerationModal.bind(this),
@@ -1503,7 +1532,6 @@ export class InnerPlayer {
     }
 
     private contextMenuItems(): Array<ContextMenuItem | null> {
-        const CHECKMARK = String.fromCharCode(0x2713);
         const items: Array<ContextMenuItem | null> = [];
         const addSeparator = () => {
             // Don't start with or duplicate separators.
@@ -1524,12 +1552,11 @@ export class InnerPlayer {
                     addSeparator();
                 }
                 items.push({
-                    // TODO: better checkboxes
-                    text:
-                        item.caption + (item.checked ? ` (${CHECKMARK})` : ``),
+                    text: item.caption,
                     onClick: async () =>
                         this.instance?.run_context_menu_callback(index),
                     enabled: item.enabled,
+                    checked: item.checked,
                 });
             });
 
@@ -1669,6 +1696,22 @@ export class InnerPlayer {
             return;
         }
 
+        // If the custom menu is already open and the user right-clicks again
+        // at roughly the same position, hide our menu and let the browser show
+        // its native context menu. A 8px threshold accounts for slight mouse drift.
+        if (
+            event.type === "contextmenu" &&
+            !this.contextMenuOverlay.classList.contains("hidden") &&
+            this.contextMenuOpenPosition !== null
+        ) {
+            const dx = event.clientX - this.contextMenuOpenPosition.x;
+            const dy = event.clientY - this.contextMenuOpenPosition.y;
+            if (dx * dx + dy * dy <= 64) {
+                this.hideContextMenu();
+                return;
+            }
+        }
+
         event.preventDefault();
 
         if (this._suppressContextMenu) {
@@ -1700,6 +1743,20 @@ export class InnerPlayer {
             );
             event.stopPropagation();
         }
+        this.hideContextMenuOnWheel = (event: WheelEvent) => {
+            const rect = this.contextMenuElement.getBoundingClientRect();
+            if (
+                event.clientX < rect.left ||
+                event.clientX > rect.right ||
+                event.clientY < rect.top ||
+                event.clientY > rect.bottom
+            ) {
+                this.hideContextMenu();
+            }
+        };
+        document.addEventListener("wheel", this.hideContextMenuOnWheel, {
+            capture: true,
+        });
 
         if (
             [false, ContextMenu.Off].includes(
@@ -1720,8 +1777,17 @@ export class InnerPlayer {
             );
         }
 
+        const items = this.contextMenuItems();
+        const hasCheckmarks = items.some(
+            (item) => item !== null && item.checked !== undefined,
+        );
+        this.contextMenuElement.classList.toggle(
+            "has-checkmarks",
+            hasCheckmarks,
+        );
+
         // Populate context menu items.
-        for (const item of this.contextMenuItems()) {
+        for (const item of items) {
             if (item === null) {
                 this.contextMenuElement.appendChild(
                     <li class="menu-separator">
@@ -1729,13 +1795,14 @@ export class InnerPlayer {
                     </li>,
                 );
             } else {
-                const { text, onClick, enabled } = item;
+                const { text, onClick, enabled, checked } = item;
 
                 const menuItem = (
                     <li
                         class={{
                             "menu-item": true,
                             disabled: enabled === false,
+                            checked: checked === true,
                         }}
                         data-text={text}
                     >
@@ -1771,6 +1838,8 @@ export class InnerPlayer {
 
         this.contextMenuOverlay.classList.remove("hidden");
 
+        this.contextMenuOpenPosition = { x: event.clientX, y: event.clientY };
+
         const playerRect = this.element.getBoundingClientRect();
         const contextMenuRect = this.contextMenuElement.getBoundingClientRect();
 
@@ -1786,19 +1855,25 @@ export class InnerPlayer {
         // mode and get the body when it's null.
         const viewportElement = document.scrollingElement || document.body;
 
-        // Keep the entire context menu inside the viewport.
-        const overflowX = Math.max(
-            0,
-            event.clientX + contextMenuRect.width - viewportElement.clientWidth,
-        );
-        const overflowY = Math.max(
-            0,
-            event.clientY +
-                contextMenuRect.height -
-                viewportElement.clientHeight,
-        );
-        const x = event.clientX - playerRect.x - overflowX;
-        const y = event.clientY - playerRect.y - overflowY;
+        const menuWidth = contextMenuRect.width;
+        const menuHeight = contextMenuRect.height;
+        const vw = viewportElement.clientWidth;
+        const vh = viewportElement.clientHeight;
+
+        // Flip the menu above/left of the cursor (like native context menus)
+        // when it would overflow, falling back to clamping if there's no room.
+        let cx = event.clientX;
+        if (cx + menuWidth > vw) {
+            cx = event.clientX - menuWidth >= 0 ? event.clientX - menuWidth : vw - menuWidth;
+        }
+
+        let cy = event.clientY;
+        if (cy + menuHeight > vh) {
+            cy = event.clientY - menuHeight >= 0 ? event.clientY - menuHeight : vh - menuHeight;
+        }
+
+        const x = cx - playerRect.x;
+        const y = cy - playerRect.y;
 
         const isRtl =
             getComputedStyle(this.contextMenuElement).direction === "rtl";
@@ -1816,6 +1891,15 @@ export class InnerPlayer {
     private hideContextMenu(): void {
         this.instance?.clear_custom_menu_items();
         this.contextMenuOverlay.classList.add("hidden");
+        this.contextMenuOpenPosition = null;
+        if (this.hideContextMenuOnWheel) {
+            document.removeEventListener(
+                "wheel",
+                this.hideContextMenuOnWheel,
+                { capture: true },
+            );
+            this.hideContextMenuOnWheel = null;
+        }
     }
 
     /**
