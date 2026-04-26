@@ -204,7 +204,7 @@
 #context-menu {
     color: rgb(var(--modal-foreground-rgb));
     background-color: var(--modal-background);
-    box-shadow: 0 4px 16px #0006;
+    box-shadow: 0 0 16px #0006;
     border-radius: 8px;
     overflow: hidden;
     position: absolute;
