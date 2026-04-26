@@ -184,9 +184,6 @@ export class InnerPlayer {
     // Allows the user to permanently disable the context menu.
     private contextMenuForceDisabled = false;
 
-    // The client position where the custom context menu was last opened.
-    private contextMenuOpenPosition: { x: number; y: number } | null = null;
-
     // Whether the most recent pointer event was from a touch (or pen).
     private isTouch = false;
     // Whether this device sends contextmenu events.
@@ -1677,20 +1674,12 @@ export class InnerPlayer {
             return;
         }
 
-        // If the custom menu is already open and the user right-clicks again
-        // at roughly the same position, hide our menu and let the browser show
-        // its native context menu. A 8px threshold accounts for slight mouse drift.
-        if (
-            event.type === "contextmenu" &&
-            !this.contextMenuOverlay.classList.contains("hidden") &&
-            this.contextMenuOpenPosition !== null
-        ) {
-            const dx = event.clientX - this.contextMenuOpenPosition.x;
-            const dy = event.clientY - this.contextMenuOpenPosition.y;
-            if (dx * dx + dy * dy <= 64) {
-                this.hideContextMenu();
-                return;
-            }
+        // If Shift is held while right-clicking, hide our custom menu and show
+        // the browser's native context menu instead.
+        // Shift+right-click works consistently on Windows, macOS, and Linux.
+        if (event.type === "contextmenu" && event.shiftKey) {
+            this.hideContextMenu();
+            return;
         }
 
         event.preventDefault();
@@ -1819,8 +1808,6 @@ export class InnerPlayer {
 
         this.contextMenuOverlay.classList.remove("hidden");
 
-        this.contextMenuOpenPosition = { x: event.clientX, y: event.clientY };
-
         const playerRect = this.element.getBoundingClientRect();
         const contextMenuRect = this.contextMenuElement.getBoundingClientRect();
 
@@ -1878,7 +1865,6 @@ export class InnerPlayer {
     private hideContextMenu(): void {
         this.instance?.clear_custom_menu_items();
         this.contextMenuOverlay.classList.add("hidden");
-        this.contextMenuOpenPosition = null;
         if (this.hideContextMenuOnWheel) {
             document.removeEventListener("wheel", this.hideContextMenuOnWheel, {
                 capture: true,
