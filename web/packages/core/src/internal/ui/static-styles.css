@@ -220,7 +220,7 @@
     }
 
     &.has-checkmarks .menu-item {
-        padding-left: 32px;
+        padding-inline-start: 32px;
         position: relative;
     }
 
@@ -229,7 +229,7 @@
         width: 16px;
         height: 16px;
         position: absolute;
-        left: 8px;
+        inset-inline-start: 8px;
         top: 50%;
         transform: translateY(-50%);
         background-image: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' height='16px' viewBox='0 -960 960 960' width='16px' fill='black'><path d='M382-240 154-468l57-57 171 171 367-367 57 57-424 424Z'/></svg>");
