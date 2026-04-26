@@ -96,7 +96,7 @@ interface ContextMenuItem {
 
     /**
      * Whether this item has a checkmark next to it.
-     * When defined, a checkmark column is shown for all items in the group.
+     * When defined, a checkmark column is shown for all items in the context menu.
      */
     checked?: boolean;
 }
