@@ -193,7 +193,6 @@ export class InnerPlayer {
     // When set to `true`, the next context menu event will
     // not show the context menu.
     private _suppressContextMenu = false;
-    private hideContextMenuOnWheel: ((event: WheelEvent) => void) | null = null;
 
     // The effective config loaded upon `.load()`.
     public loadedConfig?: URLLoadOptions | DataLoadOptions;
@@ -1713,20 +1712,6 @@ export class InnerPlayer {
             );
             event.stopPropagation();
         }
-        this.hideContextMenuOnWheel = (event: WheelEvent) => {
-            const rect = this.contextMenuElement.getBoundingClientRect();
-            if (
-                event.clientX < rect.left ||
-                event.clientX > rect.right ||
-                event.clientY < rect.top ||
-                event.clientY > rect.bottom
-            ) {
-                this.hideContextMenu();
-            }
-        };
-        document.addEventListener("wheel", this.hideContextMenuOnWheel, {
-            capture: true,
-        });
 
         if (
             [false, ContextMenu.Off].includes(
@@ -1865,12 +1850,6 @@ export class InnerPlayer {
     private hideContextMenu(): void {
         this.instance?.clear_custom_menu_items();
         this.contextMenuOverlay.classList.add("hidden");
-        if (this.hideContextMenuOnWheel) {
-            document.removeEventListener("wheel", this.hideContextMenuOnWheel, {
-                capture: true,
-            });
-            this.hideContextMenuOnWheel = null;
-        }
     }
 
     /**
