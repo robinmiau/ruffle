@@ -824,8 +824,13 @@ impl<'gc> EditText<'gc> {
         text: &WStr,
         context: &mut UpdateContext<'gc>,
     ) {
+        let hscroll = self.hscroll();
+        let scroll = self.scroll();
+
         self.0.text_spans.borrow_mut().replace_text(from, to, text);
         self.relayout(context);
+        self.0.hscroll.set(hscroll);
+        self.0.scroll.set(scroll.clamp(1, self.maxscroll()));
     }
 
     /// Construct a base text transform for a particular `EditText` span.
@@ -1275,6 +1280,7 @@ impl<'gc> EditText<'gc> {
         if let Some((text, _tf, font, params, color)) =
             lbox.as_renderable_text(self.0.text_spans.borrow().displayed_text())
         {
+            let render_settings = self.render_settings();
             let metrics = font.metrics();
             let ascent = metrics.ascent(params.height());
             let descent = metrics.descent(params.height());
@@ -1289,13 +1295,17 @@ impl<'gc> EditText<'gc> {
                         // If it's highlighted, override the color.
                         if matches!(visible_selection, Some(visible_selection) if visible_selection.contains(start + pos)) {
                             // Set text color to white
+                            let mut matrix = transform.matrix;
+                            render_settings.apply_grid_fit(&mut matrix);
                             context.transform_stack.push(&Transform {
-                                matrix: transform.matrix,
+                                matrix,
                                 color_transform: ColorTransform::IDENTITY,
                                 perspective_projection: transform.perspective_projection,
                             });
                         } else {
-                            context.transform_stack.push(transform);
+                            let mut transform = transform.clone();
+                            render_settings.apply_grid_fit(&mut transform.matrix);
+                            context.transform_stack.push(&transform);
                         }
                         glyph.render(context);
                         context.transform_stack.pop();
@@ -1344,18 +1354,15 @@ impl<'gc> EditText<'gc> {
         render_state: &mut EditTextRenderState,
     ) {
         let mut caret = context.transform_stack.transform().matrix
-            * Matrix::create_box_with_rotation(
-                1.0,
-                height.to_pixels() as f32,
-                std::f32::consts::FRAC_PI_2,
-                x,
-                Twips::ZERO,
-            );
-        let pixel_snapping = EditTextPixelSnapping::new(context.stage.quality());
-        pixel_snapping.apply(&mut caret);
+            * Matrix::create_box(1.0, height.to_pixels() as f32, x, Twips::ZERO);
+
+        // Draw the caret as a filled pixel-aligned rectangle instead of a line.
+        // Backend line primitives can be anti-aliased, which makes a 1px caret soft.
+        caret.tx = caret.tx.trunc_to_pixel();
+        caret.ty = caret.ty.trunc_to_pixel();
 
         // We have to draw the caret outside of the text mask.
-        render_state.draw_caret_command = Some(RenderCommand::DrawLine {
+        render_state.draw_caret_command = Some(RenderCommand::DrawRect {
             color,
             matrix: caret,
         });
@@ -1498,6 +1505,14 @@ impl<'gc> EditText<'gc> {
     }
 
     pub fn set_selection(self, selection: Option<TextSelection>) {
+        self.set_selection_with_hscroll(selection, HorizontalScrollMode::WithMargin);
+    }
+
+    fn set_selection_with_hscroll(
+        self,
+        selection: Option<TextSelection>,
+        hscroll_mode: HorizontalScrollMode,
+    ) {
         let old_selection = self.0.selection.get();
         if let Some(mut selection) = selection {
             selection.clamp(self.0.text_spans.borrow().text().len());
@@ -1507,6 +1522,88 @@ impl<'gc> EditText<'gc> {
         }
 
         if old_selection != self.0.selection.get() {
+            self.ensure_selection_hscroll(hscroll_mode);
+            self.invalidate_cached_bitmap();
+        }
+    }
+
+    fn caret_x_position(self, position: usize) -> Option<Twips> {
+        let layout = self.0.layout.borrow();
+        let text = self.text();
+        let text_len = text.len();
+
+        let line = if position == text_len {
+            layout.lines().last()?
+        } else {
+            layout
+                .find_line_index_by_position(position)
+                .and_then(|index| layout.lines().get(index))?
+        };
+
+        if position == line.start() {
+            return Some(line.bounds().offset_x());
+        }
+
+        if position < line.end()
+            && let Some((start, _)) = line.char_x_bounds(position)
+        {
+            return Some(start);
+        }
+
+        if position > line.start() {
+            let previous = string_utils::prev_char_boundary(&text, position);
+            if previous >= line.start()
+                && let Some((_, end)) = line.char_x_bounds(previous)
+            {
+                return Some(end);
+            }
+        }
+
+        Some(line.bounds().offset_x())
+    }
+
+    fn ensure_selection_hscroll(self, mode: HorizontalScrollMode) {
+        if self.0.flags.get().contains(EditTextFlag::WORD_WRAP) {
+            return;
+        }
+
+        let Some(selection) = self.0.selection.get() else {
+            return;
+        };
+
+        if !self.has_focus() || !self.is_editable() {
+            return;
+        }
+
+        let window_width = self.local_width_to_layout_width(
+            (self.0.bounds.get().width() - Self::GUTTER * 2).max(Twips::ZERO),
+        );
+        if window_width <= Twips::ZERO {
+            return;
+        }
+
+        let Some(caret_x) = self.caret_x_position(selection.to()) else {
+            return;
+        };
+
+        let hscroll = Twips::from_pixels(self.0.hscroll.get());
+        let visible_left = hscroll;
+        let visible_right = hscroll + window_width;
+        let margin = match mode {
+            HorizontalScrollMode::WithMargin => window_width / 4,
+            HorizontalScrollMode::None => Twips::ZERO,
+        };
+
+        let new_hscroll = if caret_x > visible_right {
+            (caret_x - window_width + margin).to_pixels().ceil()
+        } else if caret_x < visible_left {
+            (caret_x - margin).to_pixels().floor()
+        } else {
+            return;
+        };
+
+        let new_hscroll = new_hscroll.clamp(0.0, self.maxhscroll());
+        if self.0.hscroll.replace(new_hscroll) != new_hscroll {
             self.invalidate_cached_bitmap();
         }
     }
@@ -1788,9 +1885,15 @@ impl<'gc> EditText<'gc> {
 
                 self.replace_text(selection.start(), selection.end(), WStr::empty(), context);
                 if is_selectable {
-                    self.set_selection(Some(TextSelection::for_position(selection.start())));
+                    self.set_selection_with_hscroll(
+                        Some(TextSelection::for_position(selection.start())),
+                        HorizontalScrollMode::None,
+                    );
                 } else {
-                    self.set_selection(Some(TextSelection::for_position(self.text().len())));
+                    self.set_selection_with_hscroll(
+                        Some(TextSelection::for_position(self.text().len())),
+                        HorizontalScrollMode::None,
+                    );
                 }
                 changed = true;
             }
@@ -1802,7 +1905,10 @@ impl<'gc> EditText<'gc> {
             {
                 // Backspace or delete with multiple characters selected
                 self.replace_text(selection.start(), selection.end(), WStr::empty(), context);
-                self.set_selection(Some(TextSelection::for_position(selection.start())));
+                self.set_selection_with_hscroll(
+                    Some(TextSelection::for_position(selection.start())),
+                    HorizontalScrollMode::None,
+                );
                 changed = true;
             }
             TextControlCode::Backspace | TextControlCode::BackspaceWord => {
@@ -1811,7 +1917,10 @@ impl<'gc> EditText<'gc> {
                     // Delete previous character(s)
                     let start = self.find_new_position(control_code, selection.start());
                     self.replace_text(start, selection.start(), WStr::empty(), context);
-                    self.set_selection(Some(TextSelection::for_position(start)));
+                    self.set_selection_with_hscroll(
+                        Some(TextSelection::for_position(start)),
+                        HorizontalScrollMode::None,
+                    );
                     changed = true;
                 }
             }
@@ -1823,6 +1932,7 @@ impl<'gc> EditText<'gc> {
                     self.replace_text(selection.start(), end, WStr::empty(), context);
                     // No need to change selection, reset it to prevent caret from blinking
                     self.reset_selection_blinking();
+                    self.ensure_selection_hscroll(HorizontalScrollMode::None);
                     changed = true;
                 }
             }
@@ -2516,7 +2626,7 @@ impl<'gc> EditText<'gc> {
 
         // Update selection
         let selection = self.calculate_selection_at(position, selection_mode);
-        self.set_selection(Some(selection));
+        self.set_selection_with_hscroll(Some(selection), HorizontalScrollMode::None);
     }
 
     fn handle_drag(self, position: usize) {
@@ -2539,7 +2649,7 @@ impl<'gc> EditText<'gc> {
         let first_selection = self.calculate_selection_at(last_position, selection_mode);
         let current_selection = self.calculate_selection_at(position, selection_mode);
         let new_selection = TextSelection::span_across(first_selection, current_selection);
-        self.set_selection(Some(new_selection));
+        self.set_selection_with_hscroll(Some(new_selection), HorizontalScrollMode::None);
     }
 
     pub fn set_avm2_class(self, mc: &Mutation<'gc>, class: Avm2ClassObject<'gc>) {
@@ -3036,7 +3146,10 @@ impl<'gc> TInteractiveObject<'gc> for EditText<'gc> {
                         .map(|s| (s.url.clone(), s.target.clone()));
                 }
             } else {
-                self.set_selection(Some(TextSelection::for_position(self.text_length())));
+                self.set_selection_with_hscroll(
+                    Some(TextSelection::for_position(self.text_length())),
+                    HorizontalScrollMode::None,
+                );
             }
 
             if let Some((url, target)) = link_to_open
@@ -3237,6 +3350,12 @@ impl ClickEventData {
     fn selection_mode(self) -> TextSelectionMode {
         TextSelectionMode::from_click_index(self.click_index)
     }
+}
+
+#[derive(Copy, Clone, Debug)]
+enum HorizontalScrollMode {
+    WithMargin,
+    None,
 }
 
 #[derive(Copy, Clone, Debug)]
