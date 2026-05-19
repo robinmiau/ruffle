@@ -1500,17 +1500,9 @@ impl Player {
 
             // Update `_droptarget` property of dragged object.
             if let Some(movie_clip) = display_object.as_movie_clip() {
-                // Turn the dragged object invisible so that we don't pick it.
-                // TODO: This could be handled via adding a `HitTestOptions::SKIP_DRAGGED`.
-                let was_visible = display_object.visible();
-                display_object.set_visible(context, false);
                 // Set `_droptarget` to the object the mouse is hovering over.
-                let drop_target_object = run_mouse_pick(context, false);
-                movie_clip.set_drop_target(
-                    context.gc(),
-                    drop_target_object.map(|d| d.as_displayobject()),
-                );
-                display_object.set_visible(context, was_visible);
+                let drop_target_object = run_drop_target_pick(context, display_object);
+                movie_clip.set_drop_target(context.gc(), drop_target_object);
             }
         }
     }
@@ -3202,6 +3194,54 @@ fn run_mouse_pick<'gc>(
             }
         })
     })
+}
+
+fn run_drop_target_pick<'gc>(
+    context: &mut UpdateContext<'gc>,
+    dragged_object: DisplayObject<'gc>,
+) -> Option<DisplayObject<'gc>> {
+    context
+        .stage
+        .iter_render_list()
+        .rev()
+        .find_map(|level| drop_target_pick(context, level, dragged_object))
+}
+
+fn drop_target_pick<'gc>(
+    context: &mut UpdateContext<'gc>,
+    display_object: DisplayObject<'gc>,
+    dragged_object: DisplayObject<'gc>,
+) -> Option<DisplayObject<'gc>> {
+    if DisplayObject::ptr_eq(display_object, dragged_object)
+        || !display_object.visible()
+        || display_object.maskee().is_some()
+    {
+        return None;
+    }
+
+    let point = *context.mouse_position;
+    let mut options = HitTestOptions::SKIP_INVISIBLE;
+    options.set(HitTestOptions::SKIP_MASK, display_object.maskee().is_none());
+
+    if let Some(masker) = display_object.masker()
+        && !masker.hit_test_shape(context, point, options)
+    {
+        return None;
+    }
+
+    if let Some(container) = display_object.as_container() {
+        for child in container.iter_render_list().rev() {
+            if let Some(picked) = drop_target_pick(context, child, dragged_object) {
+                return Some(picked);
+            }
+        }
+    }
+
+    if display_object.hit_test_shape(context, point, HitTestOptions::MOUSE_PICK) {
+        Some(display_object)
+    } else {
+        None
+    }
 }
 
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
